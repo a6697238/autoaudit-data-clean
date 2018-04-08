@@ -4,6 +4,8 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONException;
 import com.houlu.data.clean.bean.HitEntity;
 import com.houlu.data.clean.bean.PartnerRefuseEntity;
+import com.houlu.data.clean.utils.AuditRuleHelper;
+import com.houlu.data.clean.utils.Tokenizer;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileReader;
@@ -18,23 +20,27 @@ import org.apache.commons.csv.CSVPrinter;
 /**
  * 将初始数据转换成CSV
  */
-public class GeneratePartnerRefuseCsv {
+public class Prepare4PartnerRefuseOneWord {
 
-//  private static String[] TITLE = new String[]{"keyWordId", "keyWord", "userId", "ideaId",
-//      "ideaTitle", "ideaContent", "isFalse", "hitBlack", "hitBrand", "hitCompete", "hitExclude",
-//      "hitSensitive", "hitSimilar","hitWords"};
+  private static String[] TITLE = new String[]{"keyWord", "keyWordId", "userId", "unitId",
+      "ideaId", "hitWords", "ideaTitle", "ideaTitleFull", "ideaContent",
+      "ideaContentFull", "hitBlackCount", "hitBlackContainsCount",
+      "hitBlackSplitCount", "hitBrandCount", "hitBrandContainsCount", "hitBrandSplitCount",
+      "hitCompeteCount", "hitCompeteContainsCount", "hitCompeteSplitCount", "partnerHitCount"};
 
-  private static String[] TITLE = new String[]{"keyWord", "ideaId", "ideaTitle", "ideaContent",
-      "ideaTitleFull",
-      "ideaContentFull", "hitBlackCount", "hitBlackContainsCount", "hitBlackSplitCount",
-      "hitBrandCount", "hitBrandContainsCount", "hitBrandSplitCount",
-      "hitCompeteCount", "hitCompeteContainsCount", "hitCompeteSplitCount", "hitWords","ideaContain"};
+  private static final int PREPAER_COUNT = 2000000;
+  private static final int STEP = 10000;
 
-  private static int lineCount = 0;
+
+  private static int readCount = 0;
+  private static int analyzeCount = 0;
+  private static int writeCount = 0;
 
   public static void main(String[] args) throws IOException {
-    writeCSV(txt2Entity("/apps/IdeaWorkSpace/text-utils/res_all.txt"));
-//      System.out.println(Arrays.toString("1:码特:特码;".split(";")));
+    String fileName = "/apps/IdeaWorkSpace/autoaudit-data-clean/res_refuse_one_word.csv";
+    writeCSV(fileName, txt2Entity("/apps/IdeaWorkSpace/autoaudit-data-clean/res_refuse_all.txt"));
+
+//    readRecord(new ArrayList<PartnerRefuseEntity>(),"[{\"word\":\"助手\",\"wordType\":1,\"wordId\":-1},{\"word\":\"麻将\",\"wordType\":1,\"wordId\":-1},{\"word\":\"麻将 辅助\",\"wordType\":1,\"wordId\":29922,\"similarWord\":\"麻将 铺助\"}]  1571397 名鹤麻将机      29803322494553534        2708400320      2017{}上牌器安全,{}经典助手更精湛,值得信赖!     【铺助】{}铺助是专门为{}开发的!它可以帮助你轻松嬴!\n");
   }
 
   public static List<PartnerRefuseEntity> txt2Entity(String filePath) throws IOException {
@@ -42,26 +48,44 @@ public class GeneratePartnerRefuseCsv {
     List<PartnerRefuseEntity> partnerRefuseEntityList = new ArrayList<>();
     BufferedReader br = new BufferedReader(new FileReader(file));//构造一个BufferedReader类来读取文件
     String s = null;
-    String ideaId = "";
-    String keyWordId = "";
 
     while ((s = br.readLine()) != null) {//使用readLine方法，一次读一行
-      try {
-        if (lineCount > 5000000) {
-          break;
-        }
+      if (analyzeCount > PREPAER_COUNT) {
+        break;
+      }
+      readCount++;
+      readRecord(partnerRefuseEntityList, s);
+      analyzeCount++;
+    }
+    br.close();
+    return partnerRefuseEntityList;
+  }
 
-        PartnerRefuseEntity partnerRefuseEntity = new PartnerRefuseEntity();
-        String[] recordArray = s.split("\t");
+  public static void readRecord(List<PartnerRefuseEntity> partnerRefuseEntityList, String s) {
+    String ideaId = "";
+    String keyWordId = "";
+    String userId = "";
+
+    try {
+      PartnerRefuseEntity partnerRefuseEntity = new PartnerRefuseEntity();
+      String[] recordArray = s.split("\t");
+      List<HitEntity> hitEntityList = JSON.parseArray(recordArray[0], HitEntity.class);
+      for (HitEntity hitEntity : hitEntityList) {
         //记录ID号
         ideaId = recordArray[5];
         keyWordId = recordArray[1];
-
+        userId = recordArray[3];
 
         partnerRefuseEntity.setKeyWord(recordArray[2]);
+        partnerRefuseEntity.setKeyWordId(recordArray[1]);
         partnerRefuseEntity.setIdeaId(recordArray[5]);
         partnerRefuseEntity.setIdeaTitle(recordArray[6]);
+        partnerRefuseEntity.setIdeaTitleFull(
+            getFullStr(partnerRefuseEntity.getIdeaTitle(), partnerRefuseEntity.getKeyWord()));
         partnerRefuseEntity.setIdeaContent(recordArray[7]);
+        partnerRefuseEntity.setIdeaContentFull(
+            getFullStr(partnerRefuseEntity.getIdeaContent(), partnerRefuseEntity.getKeyWord()));
+
         partnerRefuseEntity.setHitBlackCount("0");
         partnerRefuseEntity.setHitBlackContainsCount("0");
         partnerRefuseEntity.setHitBlackSplitCount("0");
@@ -71,29 +95,26 @@ public class GeneratePartnerRefuseCsv {
         partnerRefuseEntity.setHitBrandCount("0");
         partnerRefuseEntity.setHitBrandContainsCount("0");
         partnerRefuseEntity.setHitBrandSplitCount("0");
-        partnerRefuseEntity = analyzeEntity(recordArray[0], partnerRefuseEntity);
+        partnerRefuseEntity = setHitCount(hitEntity, partnerRefuseEntity);
+        partnerRefuseEntity = setPartnerHitCount(partnerRefuseEntity, hitEntityList);
         partnerRefuseEntityList.add(partnerRefuseEntity);
-        if (partnerRefuseEntityList.size() % 1000 == 0) {
-          System.out.println(partnerRefuseEntityList.size());
-        }
-        lineCount++;
-      } catch (JSONException e) {
-        e.printStackTrace();
-        System.out.println(String.format("idea id is %s, keyWord id is %s",ideaId,keyWordId));
-      } catch (Exception e) {
-        e.printStackTrace();
-        System.out.println(String.format("idea id is %s, keyWord id is %s",ideaId,keyWordId));
       }
+
+      if (partnerRefuseEntityList.size() % 1000 == 0) {
+        System.out.println("read count is " + partnerRefuseEntityList.size());
+      }
+    } catch (JSONException e) {
+      e.printStackTrace();
+      System.out.println(String.format("idea id is %s, keyWord id is %s ", ideaId, keyWordId));
+    } catch (Exception e) {
+      e.printStackTrace();
+      System.out.println(String.format("idea id is %s, keyWord id is %s", ideaId, keyWordId));
     }
-    br.close();
-    return partnerRefuseEntityList;
   }
 
-  public static PartnerRefuseEntity analyzeEntity(String str,
-      PartnerRefuseEntity partnerRefuseEntity) {
-    List<HitEntity> hitEntityList = JSON.parseArray(str, HitEntity.class);
-    StringBuilder sb = new StringBuilder();
-    for (HitEntity hitEntity : hitEntityList) {
+
+
+  public static PartnerRefuseEntity setHitCount(HitEntity hitEntity, PartnerRefuseEntity partnerRefuseEntity) {
       if ("1".equals(hitEntity.getWordType())) {
         hitBlackCountAdd(partnerRefuseEntity);
         if (hitEntity.getWord().contains(" ")) {
@@ -116,37 +137,63 @@ public class GeneratePartnerRefuseCsv {
           hitCompeteSplitCountAdd(partnerRefuseEntity);
         }
       }
-      if (sb.length() > 0) {
-        sb.append(",");
+    partnerRefuseEntity.setHitWords(hitEntity.getWord());
+    return partnerRefuseEntity;
+  }
+
+  public static PartnerRefuseEntity setPartnerHitCount(PartnerRefuseEntity partnerRefuseEntity,
+      List<HitEntity> hitWords) {
+    String titleStr = "";
+    String contentStr = "";
+    try {
+      int partnerHitCount = 0;
+      titleStr = AuditRuleHelper
+          .replaceAuditPart(AuditRuleHelper.formatCpcText(partnerRefuseEntity.getIdeaTitle()),
+              AuditRuleHelper.formatCpcText(partnerRefuseEntity.getKeyWord()));
+      contentStr = AuditRuleHelper
+          .replaceAuditPart(AuditRuleHelper.formatCpcText(partnerRefuseEntity.getIdeaContent()),
+              AuditRuleHelper.formatCpcText(partnerRefuseEntity.getKeyWord()));
+
+      List<String> titleWords = Tokenizer.apply(AuditRuleHelper.formatCpcText(titleStr));
+      List<String> contentWords = Tokenizer.apply(AuditRuleHelper.formatCpcText(contentStr));
+
+      for (HitEntity hitEntity : hitWords) {
+        String word = hitEntity.getWord();
+        if (word.contains(" ")) {
+          continue;
+        }
+        if (titleWords.contains(word)) {
+          partnerHitCount++;
+        }
+        if (contentWords.contains(word)) {
+          partnerHitCount++;
+        }
       }
-      sb.append(hitEntity.getWord());
+      partnerRefuseEntity.setPartnerHitCount(String.valueOf(partnerHitCount));
+    } catch (Exception e) {
+      e.printStackTrace();
     }
 
-    if(partnerRefuseEntity.getIdeaTitle().contains(partnerRefuseEntity.getKeyWord())){
-      partnerRefuseEntity.setIdeaContain("1");
-    }else if(partnerRefuseEntity.getIdeaContent().contains(partnerRefuseEntity.getKeyWord())){
-      partnerRefuseEntity.setIdeaContain("1");
-    }else {
-      partnerRefuseEntity.setIdeaContain("0");
-    }
-
-    partnerRefuseEntity.setHitWords(sb.toString());
     return partnerRefuseEntity;
   }
 
 
-  public static void writeCSV(List<PartnerRefuseEntity> partnerRefuseEntityList) {
+  public static void writeCSV(String fileName, List<PartnerRefuseEntity> partnerRefuseEntityList) {
     CSVFormat format = CSVFormat.DEFAULT.withHeader(TITLE).withSkipHeaderRecord(false);
     int writeCount = 0;
-    try (Writer out = new FileWriter("/apps/IdeaWorkSpace/text-utils/res_all.csv");
+    try (Writer out = new FileWriter(fileName);
         CSVPrinter printer = new CSVPrinter(out, format)) {
       for (PartnerRefuseEntity partnerRefuseEntity : partnerRefuseEntityList) {
         List<String> records = new ArrayList<>();
         records.add(partnerRefuseEntity.getKeyWord());
+        records.add(partnerRefuseEntity.getKeyWordId());
+        records.add(partnerRefuseEntity.getUserId());
+        records.add(partnerRefuseEntity.getUnitId());
         records.add(partnerRefuseEntity.getIdeaId());
+        records.add(partnerRefuseEntity.getHitWords());
         records.add(partnerRefuseEntity.getIdeaTitle());
-        records.add(partnerRefuseEntity.getIdeaContent());
         records.add(partnerRefuseEntity.getIdeaTitleFull());
+        records.add(partnerRefuseEntity.getIdeaContent());
         records.add(partnerRefuseEntity.getIdeaContentFull());
         records.add(partnerRefuseEntity.getHitBlackCount());
         records.add(partnerRefuseEntity.getHitBlackContainsCount());
@@ -157,14 +204,19 @@ public class GeneratePartnerRefuseCsv {
         records.add(partnerRefuseEntity.getHitCompeteCount());
         records.add(partnerRefuseEntity.getHitCompeteContainsCount());
         records.add(partnerRefuseEntity.getHitCompeteSplitCount());
-        records.add(partnerRefuseEntity.getHitWords());
-        records.add(partnerRefuseEntity.getIdeaContain());
+        records.add(partnerRefuseEntity.getPartnerHitCount());
         printer.printRecord(records);
         System.out.println("write count is : " + (writeCount++));
       }
     } catch (Exception e) {
       e.printStackTrace();
     }
+  }
+
+  public static String getFullStr(String str, String keyWord) {
+    str = AuditRuleHelper.formatCpcText(str);
+    keyWord = AuditRuleHelper.formatCpcText(keyWord);
+    return AuditRuleHelper.replaceAuditPart(str, keyWord);
   }
 
   public static void hitBlackCountAdd(PartnerRefuseEntity partnerRefuseEntity) {

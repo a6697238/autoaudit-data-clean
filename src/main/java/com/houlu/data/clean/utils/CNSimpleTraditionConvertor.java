@@ -24,7 +24,7 @@ public class CNSimpleTraditionConvertor {
   private static final String kTraditionToSimpleChar = "trad_to_simp_characters.txt";
   private static final String kTraditionToSimplePhrase = "trad_to_simp_phrases.txt";
 
-  private static final String kDictDir = "/apps/IdeaWorkSpace/text-utils/src/main/resources/cn_convert_dict";
+  private static final String kDictDir = "/apps/IdeaWorkSpace/autoaudit-data-clean/src/main/resources/cn_convert_dict";
 
   public static synchronized void LoadDict() throws RuntimeException {
     if (isDictLoad.get())
