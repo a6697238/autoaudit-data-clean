@@ -66,6 +66,7 @@ public class Prepare4PartnerRefuseOneWord {
     String keyWordId = "";
     String userId = "";
 
+
     try {
       PartnerRefuseEntity partnerRefuseEntity = new PartnerRefuseEntity();
       String[] recordArray = s.split("\t");
