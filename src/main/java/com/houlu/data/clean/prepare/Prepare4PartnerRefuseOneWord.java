@@ -14,8 +14,13 @@ import java.io.IOException;
 import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.BlockingDeque;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.LinkedBlockingQueue;
 import org.apache.commons.csv.CSVFormat;
 import org.apache.commons.csv.CSVPrinter;
+import org.apache.commons.lang3.StringUtils;
 
 /**
  * 将初始数据转换成CSV
@@ -28,37 +33,72 @@ public class Prepare4PartnerRefuseOneWord {
       "hitBlackSplitCount", "hitBrandCount", "hitBrandContainsCount", "hitBrandSplitCount",
       "hitCompeteCount", "hitCompeteContainsCount", "hitCompeteSplitCount", "partnerHitCount"};
 
-  private static final int PREPAER_COUNT = 2000000;
-  private static final int STEP = 10000;
+  private static Integer readCounter = 0;
+  private static Integer writeCounter = 0;
+  private static Integer lineBuffer = 10000;
+  private static Integer allReadCounter = 0;
+
+  private static BlockingQueue<List<PartnerRefuseEntity>> readQueue = new LinkedBlockingQueue<>();
 
 
-  private static int readCount = 0;
-  private static int analyzeCount = 0;
-  private static int writeCount = 0;
+  public static void main(String[] args) throws IOException, InterruptedException {
+    String readFileName = "/apps/IdeaWorkSpace/autoaudit-data-clean/res_refuse_all_20180504.csv";
+    String writFileName = "/apps/IdeaWorkSpace/autoaudit-data-clean/one_word_20180504.csv";
 
-  public static void main(String[] args) throws IOException {
-    String fileName = "/apps/IdeaWorkSpace/autoaudit-data-clean/res_refuse_one_word.csv";
-    writeCSV(fileName, txt2Entity("/apps/IdeaWorkSpace/autoaudit-data-clean/res_refuse_all.txt"));
-
+//    writeCSV(writFileName, txt2Entity(readFileName));
 //    readRecord(new ArrayList<PartnerRefuseEntity>(),"[{\"word\":\"助手\",\"wordType\":1,\"wordId\":-1},{\"word\":\"麻将\",\"wordType\":1,\"wordId\":-1},{\"word\":\"麻将 辅助\",\"wordType\":1,\"wordId\":29922,\"similarWord\":\"麻将 铺助\"}]  1571397 名鹤麻将机      29803322494553534        2708400320      2017{}上牌器安全,{}经典助手更精湛,值得信赖!     【铺助】{}铺助是专门为{}开发的!它可以帮助你轻松嬴!\n");
+    Thread readThread = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        try {
+          txt2Entity(readFileName);
+        } catch (IOException e) {
+          e.printStackTrace();
+        }
+      }
+    });
+
+    Thread writeThread = new Thread(new Runnable() {
+      @Override
+      public void run() {
+        while (true) {
+          try {
+            List<PartnerRefuseEntity> partnerRefuseEntityList = readQueue.take();
+            writeCSV(writFileName,partnerRefuseEntityList);
+          } catch (InterruptedException e) {
+            e.printStackTrace();
+          }
+        }
+      }
+    });
+    readThread.start();
+    Thread.sleep(2000);
+    writeThread.start();
+    Thread.sleep(1000000000000l);
   }
 
-  public static List<PartnerRefuseEntity> txt2Entity(String filePath) throws IOException {
+  public static List<List<PartnerRefuseEntity>> txt2Entity(String filePath) throws IOException {
     File file = new File(filePath);
     List<PartnerRefuseEntity> partnerRefuseEntityList = new ArrayList<>();
+//    List<List<PartnerRefuseEntity>> lineBufferList = new ArrayList<>();
+
     BufferedReader br = new BufferedReader(new FileReader(file));//构造一个BufferedReader类来读取文件
     String s = null;
 
     while ((s = br.readLine()) != null) {//使用readLine方法，一次读一行
-      if (analyzeCount > PREPAER_COUNT) {
-        break;
-      }
-      readCount++;
       readRecord(partnerRefuseEntityList, s);
-      analyzeCount++;
+      readCounter++;
+      if (readCounter % lineBuffer == 0 && readCounter > 0) {
+        readQueue.offer(partnerRefuseEntityList);
+        partnerRefuseEntityList = new ArrayList<>();
+        readCounter = 0;
+      }
+    }
+    if (partnerRefuseEntityList.size() > 0) {
+      readQueue.offer(partnerRefuseEntityList);
     }
     br.close();
-    return partnerRefuseEntityList;
+    return null;
   }
 
   public static void readRecord(List<PartnerRefuseEntity> partnerRefuseEntityList, String s) {
@@ -66,12 +106,15 @@ public class Prepare4PartnerRefuseOneWord {
     String keyWordId = "";
     String userId = "";
 
-
     try {
       PartnerRefuseEntity partnerRefuseEntity = new PartnerRefuseEntity();
       String[] recordArray = s.split("\t");
+      if(StringUtils.isEmpty(recordArray[0])){
+        return;
+      }
       List<HitEntity> hitEntityList = JSON.parseArray(recordArray[0], HitEntity.class);
       for (HitEntity hitEntity : hitEntityList) {
+        allReadCounter++;
         //记录ID号
         ideaId = recordArray[5];
         keyWordId = recordArray[1];
@@ -101,8 +144,8 @@ public class Prepare4PartnerRefuseOneWord {
         partnerRefuseEntityList.add(partnerRefuseEntity);
       }
 
-      if (partnerRefuseEntityList.size() % 1000 == 0) {
-        System.out.println("read count is " + partnerRefuseEntityList.size());
+      if (allReadCounter % 1000 == 0) {
+        System.out.println("read count is " + allReadCounter);
       }
     } catch (JSONException e) {
       e.printStackTrace();
@@ -114,30 +157,30 @@ public class Prepare4PartnerRefuseOneWord {
   }
 
 
-
-  public static PartnerRefuseEntity setHitCount(HitEntity hitEntity, PartnerRefuseEntity partnerRefuseEntity) {
-      if ("1".equals(hitEntity.getWordType())) {
-        hitBlackCountAdd(partnerRefuseEntity);
-        if (hitEntity.getWord().contains(" ")) {
-          hitBlackContainsCountAdd(partnerRefuseEntity);
-        } else {
-          hitBlackSplitCountAdd(partnerRefuseEntity);
-        }
-      } else if ("2".equals(hitEntity.getWordType())) {
-        hitBrandCountAdd(partnerRefuseEntity);
-        if (hitEntity.getWord().contains(" ")) {
-          hitBrandContainsCountAdd(partnerRefuseEntity);
-        } else {
-          hitBrandSplitCountAdd(partnerRefuseEntity);
-        }
-      } else if ("3".equals(hitEntity.getWordType())) {
-        hitCompeteCountAdd(partnerRefuseEntity);
-        if (hitEntity.getWord().contains(" ")) {
-          hitCompeteContainsCountAdd(partnerRefuseEntity);
-        } else {
-          hitCompeteSplitCountAdd(partnerRefuseEntity);
-        }
+  public static PartnerRefuseEntity setHitCount(HitEntity hitEntity,
+      PartnerRefuseEntity partnerRefuseEntity) {
+    if ("1".equals(hitEntity.getWordType())) {
+      hitBlackCountAdd(partnerRefuseEntity);
+      if (hitEntity.getWord().contains(" ")) {
+        hitBlackContainsCountAdd(partnerRefuseEntity);
+      } else {
+        hitBlackSplitCountAdd(partnerRefuseEntity);
       }
+    } else if ("2".equals(hitEntity.getWordType())) {
+      hitBrandCountAdd(partnerRefuseEntity);
+      if (hitEntity.getWord().contains(" ")) {
+        hitBrandContainsCountAdd(partnerRefuseEntity);
+      } else {
+        hitBrandSplitCountAdd(partnerRefuseEntity);
+      }
+    } else if ("3".equals(hitEntity.getWordType())) {
+      hitCompeteCountAdd(partnerRefuseEntity);
+      if (hitEntity.getWord().contains(" ")) {
+        hitCompeteContainsCountAdd(partnerRefuseEntity);
+      } else {
+        hitCompeteSplitCountAdd(partnerRefuseEntity);
+      }
+    }
     partnerRefuseEntity.setHitWords(hitEntity.getWord());
     return partnerRefuseEntity;
   }
@@ -180,10 +223,14 @@ public class Prepare4PartnerRefuseOneWord {
 
 
   public static void writeCSV(String fileName, List<PartnerRefuseEntity> partnerRefuseEntityList) {
-    CSVFormat format = CSVFormat.DEFAULT.withHeader(TITLE).withSkipHeaderRecord(false);
-    int writeCount = 0;
-    try (Writer out = new FileWriter(fileName);
-        CSVPrinter printer = new CSVPrinter(out, format)) {
+    CSVFormat format = null;
+    if(writeCounter>0){
+       format = CSVFormat.DEFAULT.withHeader(TITLE).withSkipHeaderRecord(true);
+    }else {
+       format = CSVFormat.DEFAULT.withHeader(TITLE).withSkipHeaderRecord(false);
+    }
+    try (FileWriter fileWriter = new FileWriter(fileName, true);
+        CSVPrinter printer = new CSVPrinter(fileWriter, format)) {
       for (PartnerRefuseEntity partnerRefuseEntity : partnerRefuseEntityList) {
         List<String> records = new ArrayList<>();
         records.add(partnerRefuseEntity.getKeyWord());
@@ -207,7 +254,7 @@ public class Prepare4PartnerRefuseOneWord {
         records.add(partnerRefuseEntity.getHitCompeteSplitCount());
         records.add(partnerRefuseEntity.getPartnerHitCount());
         printer.printRecord(records);
-        System.out.println("write count is : " + (writeCount++));
+        System.out.println("write count is : " + (writeCounter++));
       }
     } catch (Exception e) {
       e.printStackTrace();
